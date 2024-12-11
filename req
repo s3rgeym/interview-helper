@@ -1,0 +1,6 @@
+pyaudio
+webrtcvad
+SpeechRecognition
+numpy
+setuptools
+requests
