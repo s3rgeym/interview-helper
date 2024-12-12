@@ -4,11 +4,12 @@ import json
 import logging
 from http.cookies import SimpleCookie
 from pathlib import Path
-
+import re
 import pyaudio
 import requests
 import speech_recognition as sr
 import webrtcvad
+import Stemmer
 
 # Константы
 RATE = 16000
@@ -19,9 +20,12 @@ CHANNELS = 1
 MIN_SPEECH_FRAMES = 10
 MAX_SILENCE_FRAMES = 5
 BUFFER_THRESHOLD = 30_000 / FRAME_DURATION_MS * FRAME_SIZE
+MIN_RECOGNIZE_FRAMES = 10
 
 vad = webrtcvad.Vad()
 vad.set_mode(2)
+
+stemmer = Stemmer.Stemmer("russian")
 
 
 def cookies_as_dict(cookie_string):
@@ -31,26 +35,8 @@ def cookies_as_dict(cookie_string):
     return {key: morsel.value for key, morsel in cookie.items()}
 
 
-def send_to_blackbox(session, chat_id, cookie, validated, text):
+def send_to_blackbox(session, chat_id, validated, text):
     """Отправляет распознанный текст на API BlackBox.ai."""
-    headers = {
-        "accept": "*/*",
-        "accept-language": "en-US,en;q=0.9,ru;q=0.8,bg;q=0.7",
-        "content-type": "application/json",
-        "cookie": cookie,
-        "origin": "https://www.blackbox.ai",
-        "priority": "u=1, i",
-        "referer": "https://www.blackbox.ai/",
-        "sec-ch-ua": '"Brave";v="131", "Chromium";v="131", "Not_A Brand";v="24"',
-        "sec-ch-ua-mobile": "?0",
-        "sec-ch-ua-platform": '"Linux"',
-        "sec-fetch-dest": "empty",
-        "sec-fetch-mode": "cors",
-        "sec-fetch-site": "same-origin",
-        "sec-gpc": "1",
-        "user-agent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
-    }
-
     data = {
         "messages": [{"id": chat_id, "content": text, "role": "user"}],
         "id": chat_id,
@@ -77,17 +63,85 @@ def send_to_blackbox(session, chat_id, cookie, validated, text):
     }
 
     try:
-        response = session.post(
-            f"https://www.blackbox.ai/api/chat", json=data, headers=headers
-        )
+        response = session.post(f"https://www.blackbox.ai/api/chat", json=data)
         print(response.text)
     except requests.exceptions.RequestException as ex:
         logging.error(f"Ошибка отправки запроса к BlackBox.ai: {ex}")
 
 
-def process_speech(chat_id: str, cookie: str, validated: str):
+def split_words(text: str) -> list[str]:
+    return re.findall(r"[\w-]+", text)
+
+
+def is_question(sentence: str) -> bool:
+    question_stems = {
+        "как",
+        "поч",
+        "кто",
+        "когд",
+        "что",
+        "где",
+        "скольк",
+        "испра",
+        "расскаж",
+        "выполн",
+        "напеч",
+        "доба",
+        "пожалуйс",
+        "допиш",
+        "улучш",
+        "помог",
+        "подгот",
+        "продемонстрир",
+        "настр",
+        "подскаж",
+        "определ",
+        "ответ",
+        "дополн",
+        "сдел",
+        "реализоват",
+        "созд",
+        "изм",
+        "провер",
+        "перепис",
+        "убед",
+        "наход",
+        "упрост",
+        "объясн",
+        "оптимиз",
+        "запуск",
+        "напис",
+        "нарис",
+    }
+
+    words = split_words(sentence.lower())
+    stems = set(stemmer.stemWords(words))
+    return bool(stems & question_stems)
+
+
+def process_speech(chat_id: str, cookies: dict[str, str], validated: str):
     """Основная функция для захвата аудио, распознавания речи и отправки данных на сервер."""
     session = requests.session()
+    session.headers.update(
+        {
+            "accept": "*/*",
+            "accept-language": "en-US,en;q=0.9,ru;q=0.8,bg;q=0.7",
+            "content-type": "application/json",
+            "origin": "https://www.blackbox.ai",
+            "priority": "u=1, i",
+            "referer": "https://www.blackbox.ai/",
+            "sec-ch-ua": '"Brave";v="131", "Chromium";v="131", "Not_A Brand";v="24"',
+            "sec-ch-ua-mobile": "?0",
+            "sec-ch-ua-platform": '"Linux"',
+            "sec-fetch-dest": "empty",
+            "sec-fetch-mode": "cors",
+            "sec-fetch-site": "same-origin",
+            "sec-gpc": "1",
+            "user-agent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
+        }
+    )
+    for k, v in cookies.items():
+        session.cookies.set(k, v)
     audio = pyaudio.PyAudio()
     stream = audio.open(
         format=FORMAT,
@@ -109,18 +163,25 @@ def process_speech(chat_id: str, cookie: str, validated: str):
             # Захват аудио данных
             data = stream.read(FRAME_SIZE, exception_on_overflow=False)
             audio_buffer.extend(data)
-
             # Проверка, является ли фрейм речью
             if vad.is_speech(data, RATE):
                 silence_frames = 0
                 speech_frames += 1
-                if speech_frames >= MIN_SPEECH_FRAMES and not speech_recognition_started:
+                if (
+                    speech_frames >= MIN_SPEECH_FRAMES
+                    and not speech_recognition_started
+                ):
                     logging.info("Начинаем распознавание речи")
                     speech_recognition_started = True
-                    audio_buffer = audio_buffer[: -FRAME_SIZE * MIN_SPEECH_FRAMES]
+                    audio_buffer = audio_buffer[
+                        : -FRAME_SIZE * MIN_SPEECH_FRAMES
+                    ]
             else:
                 speech_frames = 0
                 silence_frames += 1
+                # Если запись не начата, то очистим буфер
+                if not speech_recognition_started:
+                    audio_buffer.clear()
 
             # Проверка на конец речи
             if speech_recognition_started and (
@@ -129,24 +190,30 @@ def process_speech(chat_id: str, cookie: str, validated: str):
             ):
                 logging.info("Конец распознавания речи")
 
-                if audio_buffer:
+                if len(audio_buffer) // FRAME_SIZE >= MIN_RECOGNIZE_FRAMES:
                     try:
                         # Распознавание речи
                         audio_data = sr.AudioData(audio_buffer, RATE, 2)
-                        text = recognizer.recognize_google(audio_data, language="ru-RU")
-                        logging.info(f"Распознанный текст: {text}")
+                        text = recognizer.recognize_google(
+                            audio_data, language="ru-RU"
+                        )
+                        logging.debug(f"Распознанный текст: {text}")
 
                         # Отправка данных на сервер
-                        send_to_blackbox(session, chat_id, cookie, validated, text)
+                        if is_question(text):
+                            send_to_blackbox(session, chat_id, validated, text)
+                        else:
+                            logging.debug("Текст не является вопросом")
                     except sr.UnknownValueError:
                         logging.warning("Не удалось распознать речь.")
                     except sr.RequestError as e:
                         logging.error(f"Ошибка сервиса распознавания речи: {e}")
-                    finally:
-                        audio_buffer.clear()
-                        speech_frames = 0
-                        silence_frames = 0
-                        speech_recognition_started = False
+                else:
+                    logging.warning("Нечего распознавать.")
+                audio_buffer.clear()
+                speech_frames = 0
+                silence_frames = 0
+                speech_recognition_started = False
 
     except KeyboardInterrupt:
         logging.info("Программа остановлена пользователем.")
@@ -165,12 +232,14 @@ def setup_logging(verbosity):
     Чем больше флагов -v, тем ниже уровень логирования.
     """
     level = max(logging.DEBUG, logging.WARNING - logging.DEBUG * verbosity)
-    logging.basicConfig(level=level, format="%(asctime)s - %(levelname)s - %(message)s")
+    logging.basicConfig(
+        level=level, format="%(asctime)s - %(levelname)s - %(message)s"
+    )
 
 
 def main():
     parser = argparse.ArgumentParser(
-        description="Программа для распознавания речи с использованием VAD."
+        description="Распознает текст из речи для получения ответов от ChatBox.AI."
     )
     parser.add_argument(
         "-v",
@@ -191,10 +260,8 @@ def main():
 
 Введите какой-нибудь запрос чтобы создался чат.
 
-Откройте консоль браузера и ваолните:
-
- * `copy(document.cookie)` чтобы копировать cookie.
- * `copy(location.pathname.split('/')[2])` — для копирования идентификатора чата.
+ * Выполните `copy(document.cookie)`, чтобы копировать cookie.
+ * Скопируйте идентефикатор чата из адреса (наюор символов без слешем).
  * Во вкладке `Network` найдите `chat` и в `Payload` скопируйте параметр `validated`.
               """
         )
@@ -222,7 +289,8 @@ def main():
         chat_id = config["chat_id"]
         validated = config["validated"]
 
-    process_speech(chat_id, cookie, validated)
+    cookies = cookies_as_dict(cookie)
+    process_speech(chat_id, cookies, validated)
 
 
 if __name__ == "__main__":
