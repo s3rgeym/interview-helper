@@ -183,6 +183,7 @@ def process_speech(chat_id: str, cookies: dict[str, str], validated: str):
                 # Если запись не начата, то очистим буфер
                 if not speech_recognition_started:
                     audio_buffer.clear()
+                    continue
 
             # Проверка на конец речи
             if speech_recognition_started and (
