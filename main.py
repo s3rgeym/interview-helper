@@ -2,14 +2,15 @@
 import argparse
 import json
 import logging
+import re
 from http.cookies import SimpleCookie
 from pathlib import Path
-import re
+
 import pyaudio
 import requests
 import speech_recognition as sr
-import webrtcvad
 import Stemmer
+import webrtcvad
 
 # Константы
 RATE = 16000
