@@ -41,6 +41,7 @@ class BlackboxError(Exception):
 
 
 class BlackboxChat:
+    # TODO: добавить создание чата и генерацию validated
     chat_endpoint: str = "https://www.blackbox.ai/api/chat"
 
     def __init__(
@@ -78,7 +79,8 @@ class BlackboxChat:
         return session
 
     def send_message(self, message: str) -> str:
-        """Отправляет распознанный текст на API BlackBox.ai."""
+        """Отправляет сообщение в чат и возвращает ответ."""
+        # TODO: я не понял как там хранить историю сообщений, как предыдущим присваивается id
         data = {
             "messages": [
                 {"id": self.chat_id, "content": message, "role": "user"}
