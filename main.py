@@ -42,8 +42,14 @@ class BlackboxError(Exception):
 
 class BlackboxChat:
     chat_endpoint: str = "https://www.blackbox.ai/api/chat"
-    
-    def __init__(self, chat_id: str, cookies: dict, validated: str, session: requests.Session = None):
+
+    def __init__(
+        self,
+        chat_id: str,
+        cookies: dict,
+        validated: str,
+        session: requests.Session = None,
+    ):
         self.chat_id = chat_id
         self.cookies = cookies
         self.validated = validated
@@ -51,28 +57,32 @@ class BlackboxChat:
 
     def get_session(self) -> requests.Session:
         session = requests.session()
-        session.headers.update({
-            "accept": "*/*",
-            "accept-language": "en-US,en;q=0.9,ru;q=0.8,bg;q=0.7",
-            "content-type": "application/json",
-            "origin": "https://www.blackbox.ai",
-            "priority": "u=1, i",
-            "referer": "https://www.blackbox.ai/",
-            "sec-ch-ua": '"Brave";v="131", "Chromium";v="131", "Not_A Brand";v="24"',
-            "sec-ch-ua-mobile": "?0",
-            "sec-ch-ua-platform": '"Linux"',
-            "sec-fetch-dest": "empty",
-            "sec-fetch-mode": "cors",
-            "sec-fetch-site": "same-origin",
-            "sec-gpc": "1",
-            "user-agent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
-        })
+        session.headers.update(
+            {
+                "accept": "*/*",
+                "accept-language": "en-US,en;q=0.9,ru;q=0.8,bg;q=0.7",
+                "content-type": "application/json",
+                "origin": "https://www.blackbox.ai",
+                "priority": "u=1, i",
+                "referer": "https://www.blackbox.ai/",
+                "sec-ch-ua": '"Brave";v="131", "Chromium";v="131", "Not_A Brand";v="24"',
+                "sec-ch-ua-mobile": "?0",
+                "sec-ch-ua-platform": '"Linux"',
+                "sec-fetch-dest": "empty",
+                "sec-fetch-mode": "cors",
+                "sec-fetch-site": "same-origin",
+                "sec-gpc": "1",
+                "user-agent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
+            }
+        )
         return session
 
     def send_message(self, message: str) -> str:
         """Отправляет распознанный текст на API BlackBox.ai."""
         data = {
-            "messages": [{"id": self.chat_id, "content": message, "role": "user"}],
+            "messages": [
+                {"id": self.chat_id, "content": message, "role": "user"}
+            ],
             "id": self.chat_id,
             "previewToken": None,
             "userId": None,
@@ -95,9 +105,11 @@ class BlackboxChat:
             "imageGenerationMode": False,
             "webSearchModePrompt": False,
         }
-    
+
         try:
-            response = self.session.post(self.chat_endpoint, json=data, cookies=self.cookies)
+            response = self.session.post(
+                self.chat_endpoint, json=data, cookies=self.cookies
+            )
             return response.text
         except requests.exceptions.RequestException as ex:
             raise BlackboxError() from ex
@@ -212,17 +224,18 @@ def process_speech(chat: BlackboxChat) -> None:
                         text = recognizer.recognize_google(
                             audio_data, language="ru-RU"
                         )
-                        logging.debug(f"Распознанный текст: {text}")
+                        logging.info(f"Распознанный текст: {text}")
 
                         # Отправка данных на сервер
                         if is_question(text):
                             try:
-                                response = chat.send_message(text)
-                                print(response)
+                                answer = chat.send_message(text)
+                                answer = answer.split("$~~~$")[-1]
+                                print(answer.strip())
                             except BlackboxError:
                                 logging.error("Ошибка Blackbox.ai")
                         else:
-                            logging.debug("Текст не является вопросом")
+                            logging.warning("Текст не является вопросом")
                     except sr.UnknownValueError:
                         logging.warning("Не удалось распознать речь.")
                     except sr.RequestError as e:
@@ -250,7 +263,7 @@ def setup_logging(verbosity):
     Устанавливает уровень логирования в зависимости от количества флагов -v.
     Чем больше флагов -v, тем ниже уровень логирования.
     """
-    level = max(logging.DEBUG, logging.WARNING - logging.DEBUG * verbosity)
+    level = max(logging.DEBUG, logging.ERROR - logging.DEBUG * verbosity)
     logging.basicConfig(
         level=level, format="%(asctime)s - %(levelname)s - %(message)s"
     )
@@ -265,7 +278,7 @@ def main():
         "--verbose",
         action="count",
         default=0,
-        help="Увеличить уровень детализации логов (добавьте -v для INFO, -vv для DEBUG).",
+        help="Увеличить уровень детализации логов (добавьте -v для WARNING, -vv для INFO, -vvv для DEBUG).",
     )
     args = parser.parse_args()
     setup_logging(args.verbose)
