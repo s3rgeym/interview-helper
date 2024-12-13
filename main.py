@@ -205,7 +205,7 @@ def process_speech(chat: BlackboxChat) -> None:
             else:
                 speech_frames = 0
                 silence_frames += 1
-                # Если запись не начата, то очистим буфер
+                # Если распознавание не начато, то очистим буфер
                 if not speech_recognition_started:
                     audio_buffer.clear()
                     continue
