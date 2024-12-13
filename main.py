@@ -97,7 +97,7 @@ class BlackboxChat:
         }
     
         try:
-            response = session.post(self.chat_endpoint, json=data, cookies=self.cookies)
+            response = self.session.post(self.chat_endpoint, json=data, cookies=self.cookies)
             return response.text
         except requests.exceptions.RequestException as ex:
             raise BlackboxError() from ex
